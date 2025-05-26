@@ -1,6 +1,5 @@
+# Ignore raw data and large files
 *.csv
-chunks/
-kepler-env/
+*.DS_Store
+kepler*.html
 
-*.csv
-kepler.gl.html
