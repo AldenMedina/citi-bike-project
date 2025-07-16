@@ -1,59 +1,152 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import random
+import matplotlib.pyplot as plt
+import seaborn as sns
 import streamlit.components.v1 as components
+import folium
+from streamlit_folium import st_folium
+from folium.plugins import MarkerCluster
 
-# Configure Streamlit page
-st.set_page_config(
-    page_title="CitiBike Dashboard",
-    page_icon="🚲",
-    layout="wide"
-)
+st.set_page_config(page_title="Citi Bike Dashboard", layout="wide")
 
-st.title("🚲 CitiBike Dashboard")
-st.markdown("""
-Welcome to the CitiBike data dashboard!  
-This app visualizes NYC CitiBike trips including the most popular start stations,  
-daily trip trends, and a map of bike trip locations using kepler.gl.
-""")
+# Load and cache data
+@st.cache_data
+def load_data():
+    trips_weather = pd.read_csv("daily_trips_weather.csv", parse_dates=["date"])
+    kepler_map_html = open("kepler_map.html", "r").read()
+    station_data = pd.read_csv("kepler_ready_sample.csv")
+    return trips_weather, kepler_map_html, station_data
 
-# Load data
-df = pd.read_csv("/Users/alden/citibike_tripdata_cleaned.csv", dtype={'start_station_id': str})
+trips_weather, kepler_map_html, station_data = load_data()
 
-# Top 10 start stations
-top_stations = df['start_station_name'].value_counts().nlargest(10).reset_index()
-top_stations.columns = ['Station', 'Trips']
-fig1 = px.bar(top_stations, x='Station', y='Trips', title='Top 10 Most Popular Start Stations')
+# Sidebar
+st.sidebar.header("🔍 Filter Data")
+season_filter = st.sidebar.selectbox("Select Season", ["All"] + sorted(station_data["season"].dropna().unique()))
 
-# Daily trip counts
-df['date'] = pd.to_datetime(df['started_at']).dt.date
-daily_trips = df.groupby('date').size().reset_index(name='trip_count')
+if season_filter != "All":
+    trips_weather = trips_weather[trips_weather["season"] == season_filter]
+    station_data = station_data[station_data["season"] == season_filter]
 
-# Add fake temperature data
-daily_trips['temperature'] = [random.uniform(5, 25) for _ in range(len(daily_trips))]
+tabs = st.tabs(["Home", "Trips vs Temp", "Kepler Map", "Top Stations", " Recommendations"])
 
-# Dual-axis plot: Trips and Temperature
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=daily_trips['date'], y=daily_trips['trip_count'], name='Trips', yaxis='y1'))
-fig2.add_trace(go.Scatter(x=daily_trips['date'], y=daily_trips['temperature'], name='Temperature (°C)', yaxis='y2'))
-fig2.update_layout(
-    title='Trips and Temperature Over Time',
-    yaxis=dict(title='Trips'),
-    yaxis2=dict(title='Temperature (°C)', overlaying='y', side='right')
-)
+# --- HOME ---
+with tabs[0]:
+    st.title("Citi Bike Data Dashboard")
+    st.markdown("""
+    Welcome to the NYC Citi Bike Dashboard! This tool allows you to explore how **bike trips** and **weather** interact across seasons in NYC.
 
-# Load Kepler.gl map
-with open("Kepler.gl.html", 'r') as f:
-    html_data = f.read()
+    ### Data Sources:
+    - `daily_trips_weather.csv`: Trip counts + weather by day
+    - `kepler_map.html`: Kepler.gl map of trip densities
+    - `kepler_ready_sample.csv`: Station-level trips with coordinates and names
 
-# Display everything
-st.subheader("Top 10 Most Popular Start Stations")
-st.plotly_chart(fig1)
+    ### Dashboard Tabs:
+    - **Trips vs Temp**: Line chart of trip activity vs. temperature
+    - **Kepler Map**: Interactive spatial heatmap
+    - **Top Stations**: Charts and map of most used stations
+    - **Recommendations**: Strategy tips based on insights
 
-st.subheader("Daily Trips vs Temperature")
-st.plotly_chart(fig2)
+    👉 Use the **sidebar** to filter by season.
+    """)
 
-st.subheader("Bike Trips Map")
-components.html(html_data, height=600)
+# --- TRIPS VS TEMP ---
+with tabs[1]:
+    st.subheader("Trips vs Temperature")
+    try:
+        fig, ax1 = plt.subplots(figsize=(12, 5))
+        ax2 = ax1.twinx()
+        sns.lineplot(data=trips_weather, x="date", y="trip_count", ax=ax1, color="blue")
+        sns.lineplot(data=trips_weather, x="date", y="avg_temp_f", ax=ax2, color="red")
+        ax1.set_ylabel("Trip Count", color="blue")
+        ax2.set_ylabel("Avg Temp (°F)", color="red")
+        ax1.set_xlabel("Date")
+        ax1.tick_params(axis='x', rotation=45)
+        ax1.grid(True)
+        st.pyplot(fig)
+        st.markdown("""
+        _We observe a clear seasonal trend:_
+        - **Higher trip volumes** during warm months (peak in summer)
+        - **Lower usage** in colder months
+        """)
+    except Exception as e:
+        st.exception(e)
+
+# --- KEPLER MAP ---
+with tabs[2]:
+    st.subheader("Kepler Map: Spatial Trip Activity")
+    st.markdown("""
+    This interactive map, powered by Kepler.gl, shows spatial patterns of bike trip activity across NYC.
+
+    ### How to Use:
+    - **Zoom** and **pan** to inspect activity across neighborhoods
+    - Use **season filter** (left sidebar) to observe how usage changes throughout the year
+    - Lighter areas indicate **higher trip densities**
+    """)
+    try:
+        components.html(kepler_map_html, height=600)
+    except Exception as e:
+        st.exception(e)
+
+# --- TOP STATIONS ---
+with tabs[3]:
+    st.subheader("Top Stations by Trip Count")
+    try:
+        top = station_data["start_station_name"].value_counts().reset_index()
+        top.columns = ["Station Name", "Trip Count"]
+        top10 = top.head(10)
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        sns.barplot(data=top10, x="Trip Count", y="Station Name", palette="mako", ax=ax)
+        ax.set_title("Top 10 Stations by Trip Count")
+        st.pyplot(fig)
+
+        st.markdown("""
+        This chart highlights the most active Citi Bike stations based on total ride volume.
+
+        ### What we observe:
+        - Stations with the highest trip counts are typically near:
+            - **Transit hubs** (e.g., Penn Station, Grand Central)
+            - **Commercial zones** (e.g., Midtown Manhattan, Financial District)
+            - **Tourist corridors** (e.g., Times Square, East River Greenway)
+        - Seasonal filtering reveals changing patterns:
+            - Some stations **surge in summer** (near parks, waterfronts)
+            - Others remain **consistently busy year-round**
+        """)
+
+        # Get coordinates for top 10 stations
+        top_station_names = top10["Station Name"].tolist()
+        top_coords = station_data[station_data["start_station_name"].isin(top_station_names)]
+        coord_grouped = top_coords.groupby("start_station_name")[["start_lat", "start_lng"]].mean().reset_index()
+
+        # Render Folium map with markers
+        st.subheader("Top 10 Station Locations on the Map")
+        st.markdown("""
+        This map visualizes the top 10 most active Citi Bike stations.  
+        It highlights their strategic placement in New York City’s busiest zones.
+        """)
+
+        top_map = folium.Map(location=[40.75, -73.98], zoom_start=13)
+        for _, row in coord_grouped.iterrows():
+            folium.Marker(
+                location=[row["start_lat"], row["start_lng"]],
+                popup=row["start_station_name"],
+                tooltip=row["start_station_name"],
+                icon=folium.Icon(color="blue", icon="bicycle", prefix="fa")
+            ).add_to(top_map)
+
+        st_folium(top_map, width=800, height=500)
+
+    except Exception as e:
+        st.exception(e)
+
+# --- RECOMMENDATIONS ---
+with tabs[4]:
+    st.subheader("💡 Strategic Recommendations")
+    st.markdown("""
+    Based on usage trends and weather patterns:
+
+    - Increase **bike availability** in summer months
+    - Deploy **extra bikes** to high-demand stations during peak times
+    - Adjust **maintenance schedules** by season to match demand
+    - Future enhancement: Use ML to **predict station-level demand** and automate rebalancing
+    """)
