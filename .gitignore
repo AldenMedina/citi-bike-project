@@ -1,5 +1,9 @@
 # Ignore raw data and large files
+# Ignore most CSVs except ones needed for the app
 *.csv
+!daily_trips_weather.csv
+!kepler_ready_sample.csv
+
 *.DS_Store
 
 
